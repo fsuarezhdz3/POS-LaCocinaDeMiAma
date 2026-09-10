@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "POS",
+    "slug": "la-cocina-pos",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/iconoapp.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/iconoapp.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/iconoapp.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.lacocina.pos"
+    },
+    "web": {
+      "favicon": "./assets/iconoapp.png"
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-image",
+      "expo-status-bar"
+    ]
+  }
+}

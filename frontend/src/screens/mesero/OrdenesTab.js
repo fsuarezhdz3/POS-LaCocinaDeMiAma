@@ -244,6 +244,79 @@ export default function OrdenesTab() {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerConfig, setPickerConfig] = useState({ title: '', field: '', options: [] });
 
+  // Helper para buscar un objeto alimento en alimentosBD ignorando la zona (-cocina, -comal, -barra)
+  const buscarAlimentoCatalog = (nombreStr) => {
+    if (!nombreStr) return null;
+    const limpio = limpiarZona(nombreStr).toLowerCase();
+    return alimentosBD.find((a) => a.nombre && a.nombre.toLowerCase() === limpio) || null;
+  };
+
+  // Helper para verificar si un formulario de edición cumple los requisitos de Paquete Completo
+  const esPaqueteCompletoEdicion = (cat, form) => {
+    if (cat === 'comida') {
+      const tienePlato = !!form.alimento;
+      const tieneEntrada = !!form.entrada;
+      const tieneDosGuarniciones = !!form.guarnicion1 && !!form.guarnicion2;
+      const tieneBebida = !!form.bebida;
+      return tienePlato && tieneEntrada && tieneDosGuarniciones && tieneBebida;
+    }
+    if (cat === 'desayunos') {
+      const tieneDesayuno = !!form.alimento;
+      const tieneGuarnicion = !!form.guarnicion1 || !!form.guarnicion2 || !!form.entrada;
+      const tieneBebida = !!form.bebida;
+      return tieneDesayuno && tieneGuarnicion && tieneBebida;
+    }
+    return false;
+  };
+
+  // Helper para calcular dinámicamente el precio del ítem editado (Paquete Completo vs Elementos Individuales)
+  const calcularCostoPaqueteEdicion = (cat, form) => {
+    const esCompleto = esPaqueteCompletoEdicion(cat, form);
+
+    const getPrecioElem = (nombreStr) => {
+      if (!nombreStr) return 0;
+      const obj = buscarAlimentoCatalog(nombreStr);
+      if (!obj) return 0;
+      const normal = Number(obj.precio || 0);
+      const pkgPrice = (obj.precio_paquete !== null && obj.precio_paquete !== undefined && Number(obj.precio_paquete) > 0)
+        ? Number(obj.precio_paquete)
+        : normal;
+
+      return esCompleto ? pkgPrice : normal;
+    };
+
+    const pAlimento = getPrecioElem(form.alimento);
+    const pEntrada = getPrecioElem(form.entrada);
+    const pGuarnicion1 = getPrecioElem(form.guarnicion1);
+    const pGuarnicion2 = getPrecioElem(form.guarnicion2);
+    const pBebida = getPrecioElem(form.bebida);
+
+    // Extras
+    const arrayExtras = form.extras ? form.extras.split(', ').filter(Boolean) : [];
+    const pExtras = arrayExtras.reduce((sum, extraNombre) => {
+      const objExtra = buscarAlimentoCatalog(extraNombre);
+      return sum + Number(objExtra?.precio || 0);
+    }, 0);
+
+    // Guisado extra en Antojitos
+    let pGuisoExtra = 0;
+    if (cat === 'antojitos' && form.guiso && form.guiso !== 'Sencillo') {
+      const objGuiso = buscarAlimentoCatalog(form.guiso);
+      const objAntojito = buscarAlimentoCatalog(form.alimento);
+      if (objGuiso?.precio_antojito !== null && objGuiso?.precio_antojito !== undefined && Number(objGuiso?.precio_antojito) >= 0) {
+        pGuisoExtra = Number(objGuiso.precio_antojito);
+      } else if (objAntojito?.precio_antojito !== null && objAntojito?.precio_antojito !== undefined && Number(objAntojito?.precio_antojito) > 0) {
+        pGuisoExtra = Number(objAntojito.precio_antojito);
+      }
+    }
+
+    if (cat === 'comida' || cat === 'desayunos') {
+      return pAlimento + pEntrada + pGuarnicion1 + pGuarnicion2 + pBebida + pExtras;
+    } else {
+      return pAlimento + pGuisoExtra + pBebida + pExtras;
+    }
+  };
+
   const abrirPicker = (field, title, options) => {
     setPickerConfig({ field, title, options });
     setPickerVisible(true);
@@ -251,10 +324,15 @@ export default function OrdenesTab() {
 
   const seleccionarOpcionPicker = (opcionNombre) => {
     const { field } = pickerConfig;
-    setEditForm((prev) => ({
-      ...prev,
-      [field]: opcionNombre === prev[field] ? '' : (opcionNombre || ''),
-    }));
+    setEditForm((prev) => {
+      const valorNuevo = opcionNombre === prev[field] ? '' : (opcionNombre || '');
+      const nuevoForm = { ...prev, [field]: valorNuevo };
+      const nuevoCosto = calcularCostoPaqueteEdicion(categoriaEditForm, nuevoForm);
+      return {
+        ...nuevoForm,
+        costo: String(nuevoCosto > 0 ? nuevoCosto : prev.costo),
+      };
+    });
     setPickerVisible(false);
   };
 
@@ -335,17 +413,24 @@ export default function OrdenesTab() {
     const cat = detectarCategoriaItem(item);
     setCategoriaEditForm(cat);
     setItemEditando(item);
-    setEditForm({
-      alimento: item.alimento || '',
-      entrada: item.entrada || '',
-      guarnicion1: item.guarnicion1 || '',
-      guarnicion2: item.guarnicion2 || '',
-      bebida: item.bebida || '',
-      guiso: item.guiso || (cat === 'antojitos' ? 'Sencillo' : ''),
-      extras: item.extras || '',
+    const formInicial = {
+      alimento: item.alimento ? limpiarZona(item.alimento) : '',
+      entrada: item.entrada ? limpiarZona(item.entrada) : '',
+      guarnicion1: item.guarnicion1 ? limpiarZona(item.guarnicion1) : '',
+      guarnicion2: item.guarnicion2 ? limpiarZona(item.guarnicion2) : '',
+      bebida: item.bebida ? limpiarZona(item.bebida) : '',
+      guiso: item.guiso ? limpiarZona(item.guiso) : (cat === 'antojitos' ? 'Sencillo' : ''),
+      extras: item.extras ? limpiarZona(item.extras) : '',
       comentarios: item.comentarios || '',
       costo: String(item.costo || '0'),
-    });
+    };
+
+    const costoRecalculado = calcularCostoPaqueteEdicion(cat, formInicial);
+    if (costoRecalculado > 0) {
+      formInicial.costo = String(costoRecalculado);
+    }
+
+    setEditForm(formInicial);
     setEditModalVisible(true);
   };
 
@@ -1149,6 +1234,28 @@ export default function OrdenesTab() {
               </TouchableOpacity>
             </View>
 
+            {(categoriaEditForm === 'comida' || categoriaEditForm === 'desayunos') && (
+              <View style={[
+                styles.tarifaBadgeBox,
+                esPaqueteCompletoEdicion(categoriaEditForm, editForm) ? styles.tarifaBadgeBoxCompleto : styles.tarifaBadgeBoxIncompleto
+              ]}>
+                <Ionicons
+                  name={esPaqueteCompletoEdicion(categoriaEditForm, editForm) ? "checkmark-circle" : "alert-circle-outline"}
+                  size={16}
+                  color={esPaqueteCompletoEdicion(categoriaEditForm, editForm) ? "#0F766E" : "#D97706"}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[
+                  styles.tarifaBadgeText,
+                  esPaqueteCompletoEdicion(categoriaEditForm, editForm) ? styles.tarifaBadgeTextCompleto : styles.tarifaBadgeTextIncompleto
+                ]}>
+                  {esPaqueteCompletoEdicion(categoriaEditForm, editForm)
+                    ? 'Tarifa de Paquete Completo Aplicada ✅'
+                    : 'Paquete Incompleto (Cobro de Elementos Individuales) ⚠️'}
+                </Text>
+              </View>
+            )}
+
             <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
               {/* 1. SECCIÓN PRINCIPAL SEGÚN CATEGORÍA */}
               {categoriaEditForm === 'desayunos' && (
@@ -1396,7 +1503,15 @@ export default function OrdenesTab() {
                             } else {
                               arrayExtras.push(extraNombre);
                             }
-                            setEditForm((p) => ({ ...p, extras: arrayExtras.join(', ') }));
+                            const nuevoExtrasStr = arrayExtras.join(', ');
+                            setEditForm((prev) => {
+                              const nuevoForm = { ...prev, extras: nuevoExtrasStr };
+                              const nuevoCosto = calcularCostoPaqueteEdicion(categoriaEditForm, nuevoForm);
+                              return {
+                                ...nuevoForm,
+                                costo: String(nuevoCosto > 0 ? nuevoCosto : prev.costo),
+                              };
+                            });
                           }}
                           activeOpacity={0.8}
                         >
@@ -2290,5 +2405,34 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#059669',
+  },
+
+  /* Tarifa Badge en Edición */
+  tarifaBadgeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+  },
+  tarifaBadgeBoxCompleto: {
+    backgroundColor: '#F0FDFA',
+    borderColor: '#99F6E4',
+  },
+  tarifaBadgeBoxIncompleto: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  tarifaBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  tarifaBadgeTextCompleto: {
+    color: '#0F766E',
+  },
+  tarifaBadgeTextIncompleto: {
+    color: '#B45309',
   },
 });

@@ -79,6 +79,14 @@ export default function AdminHomeScreen() {
   const [montoPaga, setMontoPaga] = useState('');
   const [itemsSeleccionadosCobro, setItemsSeleccionadosCobro] = useState({});
 
+  // Estado Modal de Justificación de Edición/Eliminación al Cobrar
+  const [modalJustificacionVisible, setModalJustificacionVisible] = useState(false);
+  const [itemAccionCobro, setItemAccionCobro] = useState(null); // { item, accion: 'editar' | 'eliminar' }
+  const [justificacionTexto, setJustificacionTexto] = useState('');
+  const [editItemCosto, setEditItemCosto] = useState('');
+  const [editItemAlimento, setEditItemAlimento] = useState('');
+  const [editItemComentarios, setEditItemComentarios] = useState('');
+
   // ==========================================
   // ESTADOS GESTIÓN DEL MENÚ (ALIMENTOS)
   // ==========================================
@@ -349,6 +357,108 @@ export default function AdminHomeScreen() {
         setOrdenACobrar(null);
         cargarTodasLasOrdenes(false);
         cargarCorteActivo();
+      }
+    } catch (e) {
+      Alert.alert('Error de conexión', 'No se pudo conectar con el servidor.');
+    }
+  };
+
+  // Abrir modal de edición con justificación para un ítem de la orden
+  const abrirModalEditarItemCobro = (item) => {
+    setItemAccionCobro({ item, accion: 'editar' });
+    setEditItemAlimento(item.alimento ? limpiarZona(item.alimento) : '');
+    setEditItemCosto(String(item.costo || 0));
+    setEditItemComentarios(item.comentarios || '');
+    setJustificacionTexto('');
+    setModalJustificacionVisible(true);
+  };
+
+  // Abrir modal de cancelación con justificación para un ítem de la orden
+  const abrirModalEliminarItemCobro = (item) => {
+    setItemAccionCobro({ item, accion: 'eliminar' });
+    setEditItemAlimento(item.alimento ? limpiarZona(item.alimento) : '');
+    setEditItemCosto(String(item.costo || 0));
+    setEditItemComentarios(item.comentarios || '');
+    setJustificacionTexto('');
+    setModalJustificacionVisible(true);
+  };
+
+  // Confirmar edición o cancelación de un ítem exigiendo justificación obligatoria
+  const handleConfirmarAccionCobro = async () => {
+    if (!itemAccionCobro || !itemAccionCobro.item) return;
+
+    if (!justificacionTexto.trim()) {
+      Alert.alert(
+        'Justificación Requerida ⚠️',
+        'Debes ingresar obligatoriamente el motivo del cambio o reclamación para modificar esta orden.'
+      );
+      return;
+    }
+
+    const { item, accion } = itemAccionCobro;
+
+    try {
+      if (accion === 'editar') {
+        const res = await fetch(`${API_URL}/pedidos/alimento-pedido/${item.id}/editar`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            alimento: editItemAlimento,
+            costo: Number(editItemCosto) || 0,
+            comentarios: editItemComentarios,
+            justificacion: justificacionTexto.trim(),
+          }),
+        });
+
+        if (res.ok) {
+          Alert.alert('Éxito ✅', 'El ítem fue actualizado correctamente con su justificación.');
+          setModalJustificacionVisible(false);
+
+          if (ordenACobrar) {
+            const nuevosItems = ordenACobrar.items.map((i) =>
+              i.id === item.id
+                ? {
+                    ...i,
+                    alimento: editItemAlimento,
+                    costo: Number(editItemCosto) || 0,
+                    comentarios: i.comentarios
+                      ? `${i.comentarios} [MOTIVO CAMBIO]: ${justificacionTexto.trim()}`
+                      : `[MOTIVO CAMBIO]: ${justificacionTexto.trim()}`,
+                  }
+                : i
+            );
+            setOrdenACobrar({ ...ordenACobrar, items: nuevosItems });
+          }
+          cargarTodasLasOrdenes(false);
+        } else {
+          Alert.alert('Error', 'No se pudo actualizar el ítem.');
+        }
+      } else if (accion === 'eliminar') {
+        const res = await fetch(`${API_URL}/pedidos/alimento-pedido/${item.id}/cancelar`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            justificacion: justificacionTexto.trim(),
+          }),
+        });
+
+        if (res.ok) {
+          Alert.alert('Eliminado ✅', 'El ítem fue removido de la orden con su justificación registrada.');
+          setModalJustificacionVisible(false);
+
+          if (ordenACobrar) {
+            const nuevosItems = ordenACobrar.items.filter((i) => i.id !== item.id);
+            if (nuevosItems.length === 0) {
+              setCobroModalVisible(false);
+              setOrdenACobrar(null);
+            } else {
+              setOrdenACobrar({ ...ordenACobrar, items: nuevosItems });
+            }
+          }
+          cargarTodasLasOrdenes(false);
+        } else {
+          Alert.alert('Error', 'No se pudo cancelar el ítem.');
+        }
       }
     } catch (e) {
       Alert.alert('Error de conexión', 'No se pudo conectar con el servidor.');
@@ -2244,6 +2354,40 @@ export default function AdminHomeScreen() {
               </TouchableOpacity>
             </View>
 
+            {tipoCobro === 'toda' && (
+              <View style={styles.listaSeparadosBox}>
+                <Text style={styles.listaSeparadosTitle}>Platillos en esta comanda (Editar o Cancelar):</Text>
+                <ScrollView style={{ maxHeight: 130 }}>
+                  {ordenACobrar?.items
+                    .filter((item) => Number(item.estado) !== 4)
+                    .map((item) => (
+                      <View key={item.id} style={styles.itemSeparadoRow}>
+                        <Text style={styles.itemSeparadoNombre} numberOfLines={1}>
+                          • {limpiarZona(item.alimento)}
+                        </Text>
+                        <Text style={[styles.itemSeparadoCosto, { marginRight: 8 }]}>${item.costo}.00</Text>
+
+                        <TouchableOpacity
+                          style={styles.btnIconAccionCobro}
+                          onPress={() => abrirModalEditarItemCobro(item)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="pencil-outline" size={16} color="#0284C7" />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.btnIconAccionCobro, { marginLeft: 4 }]}
+                          onPress={() => abrirModalEliminarItemCobro(item)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                </ScrollView>
+              </View>
+            )}
+
             {tipoCobro === 'separado' && (
               <View style={styles.listaSeparadosBox}>
                 <Text style={styles.listaSeparadosTitle}>Selecciona los platillos a cobrar ahora:</Text>
@@ -2253,23 +2397,43 @@ export default function AdminHomeScreen() {
                     .map((item) => {
                       const isSelected = !!itemsSeleccionadosCobro[item.id];
                       return (
-                        <TouchableOpacity
+                        <View
                           key={item.id}
                           style={[styles.itemSeparadoRow, isSelected && styles.itemSeparadoRowSelected]}
-                          onPress={() => toggleItemCobroSeparado(item.id)}
-                          activeOpacity={0.8}
                         >
-                          <Ionicons
-                            name={isSelected ? 'checkbox' : 'square-outline'}
-                            size={20}
-                            color={isSelected ? '#0D9488' : '#64748B'}
-                            style={{ marginRight: 8 }}
-                          />
-                          <Text style={styles.itemSeparadoNombre} numberOfLines={1}>
-                            {limpiarZona(item.alimento)}
-                          </Text>
-                          <Text style={styles.itemSeparadoCosto}>${item.costo}.00</Text>
-                        </TouchableOpacity>
+                          <TouchableOpacity
+                            style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                            onPress={() => toggleItemCobroSeparado(item.id)}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons
+                              name={isSelected ? 'checkbox' : 'square-outline'}
+                              size={20}
+                              color={isSelected ? '#0D9488' : '#64748B'}
+                              style={{ marginRight: 8 }}
+                            />
+                            <Text style={styles.itemSeparadoNombre} numberOfLines={1}>
+                              {limpiarZona(item.alimento)}
+                            </Text>
+                            <Text style={[styles.itemSeparadoCosto, { marginRight: 8 }]}>${item.costo}.00</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.btnIconAccionCobro}
+                            onPress={() => abrirModalEditarItemCobro(item)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="pencil-outline" size={16} color="#0284C7" />
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={[styles.btnIconAccionCobro, { marginLeft: 4 }]}
+                            onPress={() => abrirModalEliminarItemCobro(item)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                          </TouchableOpacity>
+                        </View>
                       );
                     })}
                 </ScrollView>
@@ -2365,6 +2529,92 @@ export default function AdminHomeScreen() {
                 {tipoCobro === 'toda' ? 'Confirmar Cobro Total' : 'Cobrar Ítems Seleccionados'}
               </Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL JUSTIFICACIÓN OBLIGATORIA DE CAMBIO/CANCELACIÓN */}
+      <Modal visible={modalJustificacionVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.justificacionModalCard}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>
+                {itemAccionCobro?.accion === 'editar' ? 'Editar Platillo en Orden' : 'Cancelar Platillo de Orden'}
+              </Text>
+              <TouchableOpacity onPress={() => setModalJustificacionVisible(false)}>
+                <Ionicons name="close-circle-outline" size={26} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.justificacionHeaderSub}>
+              {itemAccionCobro?.accion === 'editar'
+                ? 'Modifica los datos del platillo e ingresa obligatoriamente el motivo del cambio o reclamación.'
+                : 'Confirmar cancelación del platillo. Debes ingresar obligatoriamente la justificación del cambio.'}
+            </Text>
+
+            {itemAccionCobro?.accion === 'editar' && (
+              <>
+                <Text style={styles.justificacionInputLabel}>Platillo / Alimento:</Text>
+                <TextInput
+                  style={styles.justificacionInputField}
+                  value={editItemAlimento}
+                  onChangeText={setEditItemAlimento}
+                  placeholder="Nombre del alimento"
+                  placeholderTextColor="#94A3B8"
+                />
+
+                <Text style={styles.justificacionInputLabel}>Costo ($):</Text>
+                <TextInput
+                  style={styles.justificacionInputField}
+                  value={editItemCosto}
+                  onChangeText={setEditItemCosto}
+                  keyboardType="numeric"
+                  placeholder="0.00"
+                  placeholderTextColor="#94A3B8"
+                />
+              </>
+            )}
+
+            <Text style={styles.justificacionInputLabelObligatorio}>
+              Justificación / Motivo del Cambio * (Obligatorio):
+            </Text>
+            <TextInput
+              style={styles.justificacionTextArea}
+              value={justificacionTexto}
+              onChangeText={setJustificacionTexto}
+              placeholder="Ej: Error al tomar la orden, platillo frío, cambio solicitado por el cliente..."
+              placeholderTextColor="#94A3B8"
+              multiline
+              numberOfLines={3}
+            />
+
+            <View style={styles.justificacionModalActions}>
+              <TouchableOpacity
+                style={styles.btnCancelarJustificacion}
+                onPress={() => setModalJustificacionVisible(false)}
+              >
+                <Text style={styles.btnCancelarJustificacionText}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.btnGuardarJustificacion,
+                  itemAccionCobro?.accion === 'eliminar' && { backgroundColor: '#DC2626' },
+                ]}
+                onPress={handleConfirmarAccionCobro}
+                activeOpacity={0.85}
+              >
+                <Ionicons
+                  name={itemAccionCobro?.accion === 'editar' ? 'save-outline' : 'trash-outline'}
+                  size={18}
+                  color="#FFFFFF"
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.btnGuardarJustificacionText}>
+                  {itemAccionCobro?.accion === 'editar' ? 'Guardar Cambios' : 'Confirmar Cancelación'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -3618,6 +3868,101 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: '#0D9488',
+  },
+  btnIconAccionCobro: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  /* Modal de Justificación */
+  justificacionModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    width: '100%',
+    maxWidth: 440,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  justificacionHeaderSub: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    marginBottom: 14,
+    lineHeight: 16,
+  },
+  justificacionInputLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 4,
+    marginTop: 6,
+  },
+  justificacionInputField: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: '#0F172A',
+    marginBottom: 8,
+  },
+  justificacionInputLabelObligatorio: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#DC2626',
+    marginBottom: 4,
+    marginTop: 8,
+  },
+  justificacionTextArea: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+    borderColor: '#FCA5A5',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: '#0F172A',
+    textAlignVertical: 'top',
+    minHeight: 70,
+    marginBottom: 16,
+  },
+  justificacionModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  btnCancelarJustificacion: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+  },
+  btnCancelarJustificacionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  btnGuardarJustificacion: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#0D9488',
+  },
+  btnGuardarJustificacionText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 
   totalCobrarBox: {

@@ -543,14 +543,20 @@ const revertirBarraItem = async (req, res) => {
 // Editar campos de un alimento_pedido y recalcular costo del pedido padre
 const editarAlimentoPedido = async (req, res) => {
   const { id } = req.params;
-  const { alimento, comentarios, guarnicion1, guarnicion2, entrada, bebida, guiso, extras, costo } = req.body;
+  const { alimento, comentarios, guarnicion1, guarnicion2, entrada, bebida, guiso, extras, costo, justificacion } = req.body;
 
   try {
-    const [rows] = await db.query('SELECT num_orden FROM alimentos_pedidos WHERE id = ?', [id]);
+    const [rows] = await db.query('SELECT num_orden, comentarios FROM alimentos_pedidos WHERE id = ?', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Ítem de comanda no encontrado' });
     }
     const numOrden = rows[0].num_orden;
+    let comentariosActuales = comentarios !== undefined ? comentarios : (rows[0].comentarios || '');
+
+    if (justificacion && String(justificacion).trim()) {
+      const justTexto = `[MOTIVO CAMBIO]: ${String(justificacion).trim()}`;
+      comentariosActuales = comentariosActuales ? `${comentariosActuales} ${justTexto}` : justTexto;
+    }
 
     await db.query(
       `UPDATE alimentos_pedidos 
@@ -566,7 +572,7 @@ const editarAlimentoPedido = async (req, res) => {
        WHERE id = ?`,
       [
         alimento || null,
-        comentarios !== undefined ? comentarios : null,
+        comentariosActuales || null,
         guarnicion1 !== undefined ? guarnicion1 : null,
         guarnicion2 !== undefined ? guarnicion2 : null,
         entrada !== undefined ? entrada : null,
@@ -597,13 +603,25 @@ const editarAlimentoPedido = async (req, res) => {
 // Cancelar/eliminar un alimento_pedido y recalcular costo del pedido padre
 const cancelarAlimentoPedido = async (req, res) => {
   const { id } = req.params;
+  const { justificacion } = req.body || req.query || {};
 
   try {
-    const [rows] = await db.query('SELECT num_orden FROM alimentos_pedidos WHERE id = ?', [id]);
+    const [rows] = await db.query('SELECT num_orden, alimento FROM alimentos_pedidos WHERE id = ?', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Ítem de comanda no encontrado' });
     }
     const numOrden = rows[0].num_orden;
+    const nombreAlimento = rows[0].alimento || 'Ítem';
+
+    if (justificacion && String(justificacion).trim()) {
+      const logMotivo = `[CANCELADO ${nombreAlimento}]: ${String(justificacion).trim()}`;
+      try {
+        await db.query(
+          'UPDATE pedidos SET comentarios = CONCAT(COALESCE(comentarios, ""), " ", ?) WHERE num_orden = ?',
+          [logMotivo, numOrden]
+        );
+      } catch (e) {}
+    }
 
     // Eliminar la orden
     await db.query('DELETE FROM alimentos_pedidos WHERE id = ?', [id]);
